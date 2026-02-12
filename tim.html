@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>i love4 - TikTok Glow (Fixed)</title>
+
+<style>
+  @import "https://fonts.googleapis.com/css2?family=Megrim&display=swap";
+  html,body{margin:0;height:100%;overflow:hidden;background:#05030a}
+  canvas{position:fixed;inset:0;display:block}
+
+  #word{
+    position:fixed;left:20px;top:10px;margin:0;
+    font-family:Megrim,cursive;
+    font-size:min(24vh, 160px);
+    color:#ffcc00;
+    -webkit-text-stroke:0.22vh #b000ff;
+    text-shadow:
+      0 0 10px rgba(255,204,0,.55),
+      0 0 24px rgba(255,204,0,.30),
+      0 0 18px rgba(176,0,255,.55),
+      0 0 42px rgba(176,0,255,.35);
+    mix-blend-mode:screen;
+    pointer-events:none;
+    user-select:none;
+    opacity:.98;
+  }
+  .hint{
+    position:fixed;right:12px;bottom:10px;
+    font:12px/1.2 system-ui,-apple-system,Segoe UI,Roboto;
+    color:rgba(255,255,255,.45);
+    user-select:none;pointer-events:none;
+  }
+</style>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/examples/jsm/postprocessing/EffectComposer.js": "https://unpkg.com/three@0.160.0/examples/jsm/postprocessing/EffectComposer.js",
+    "three/examples/jsm/postprocessing/RenderPass.js": "https://unpkg.com/three@0.160.0/examples/jsm/postprocessing/RenderPass.js",
+    "three/examples/jsm/postprocessing/UnrealBloomPass.js": "https://unpkg.com/three@0.160.0/examples/jsm/postprocessing/UnrealBloomPass.js"
+  }
+}
+</script>
+</head>
+
+<body>
+<h1 id="word">i love4</h1>
+<div class="hint">Move / Drag / Scroll • + / - chỉnh bloom</div>
+<canvas id="c"></canvas>
+
+<script type="module">
+import * as THREE from "three";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+
+const canvas = document.getElementById("c");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias:true, alpha:false, powerPreference:"high-performance" });
+renderer.setPixelRatio(Math.min(2.25, devicePixelRatio || 1));
+renderer.setClearColor(0x05030a, 1);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 250);
+camera.position.set(0, 0.65, 9);
+
+const root = new THREE.Group();
+scene.add(root);
+
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+const rand  = (a,b)=>a+Math.random()*(b-a);
+const lerp  = (a,b,t)=>a+(b-a)*t;
+
+// ---- Postprocessing Bloom
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+
+const bloomPass = new UnrealBloomPass(
+  new THREE.Vector2(innerWidth, innerHeight),
+  1.35,  // strength
+  0.35,  // radius
+  0.12   // threshold
+);
+composer.addPass(bloomPass);
+
+// ---- Background stars
+{
+  const N = 1600;
+  const geo = new THREE.BufferGeometry();
+  const pos = new Float32Array(N*3);
+  const col = new Float32Array(N*3);
+  for (let i=0;i<N;i++){
+    const r = Math.pow(Math.random(), 0.35) * 95;
+    const th = rand(0, Math.PI*2);
+    const ph = Math.acos(rand(-1,1));
+    pos[i*3+0]=r*Math.sin(ph)*Math.cos(th);
+    pos[i*3+1]=r*Math.cos(ph);
+    pos[i*3+2]=r*Math.sin(ph)*Math.sin(th);
+
+    const w = rand(0.25, 0.9);
+    col[i*3+0]=w; col[i*3+1]=w; col[i*3+2]=w;
+  }
+  geo.setAttribute("position", new THREE.BufferAttribute(pos,3));
+  geo.setAttribute("color", new THREE.BufferAttribute(col,3)); // ok with PointsMaterial
+  const mat = new THREE.PointsMaterial({
+    size: 0.09,
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.35,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending
+  });
+  root.add(new THREE.Points(geo, mat));
+}
+
+// ---- Particle shader (FIX: use aColor instead of color)
+const uniforms = {
+  uTime: { value: 0 },
+  uSize: { value: renderer.getPixelRatio() * 2.8 }
+};
+
+const particleMat = new THREE.ShaderMaterial({
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+  uniforms,
+  vertexShader: `
+    uniform float uTime;
+    uniform float uSize;
+
+    attribute vec3 aColor;
+    varying vec3 vColor;
+    varying float vAlpha;
+
+    float hash(float n){ return fract(sin(n)*43758.5453123); }
+
+    void main(){
+      vColor = aColor;
+      vec3 p = position;
+
+      float h = hash(position.x*17.3 + position.y*9.1 + position.z*13.7);
+      float spark = sin(uTime*2.0 + h*6.2831) * 0.018;
+      p += normalize(position + 0.0001) * spark;
+
+      vec4 mv = modelViewMatrix * vec4(p, 1.0);
+      gl_Position = projectionMatrix * mv;
+
+      float s = uSize * (1.0 / -mv.z);
+      s *= mix(0.9, 1.8, h);
+      gl_PointSize = clamp(s, 0.0, 18.0);
+
+      float d = length(position);
+      vAlpha = smoothstep(10.5, 0.0, d);
+      vAlpha = vAlpha * 0.9 + 0.25;
+    }
+  `,
+  fragmentShader: `
+    precision highp float;
+    varying vec3 vColor;
+    varying float vAlpha;
+
+    void main(){
+      vec2 uv = gl_PointCoord - 0.5;
+      float r = length(uv);
+
+      float core = smoothstep(0.16, 0.0, r);
+      float glow = smoothstep(0.70, 0.0, r) * 0.85;
+
+      float a = (core + glow) * vAlpha;
+      vec3 c = vColor * (1.25 + glow*0.9);
+
+      gl_FragColor = vec4(c, a);
+    }
+  `
+});
+
+// ---- Build galaxy geometry with aColor attribute
+function buildGalaxy({
+  diskCount = 90000,
+  coreCount = 22000,
+  radius = 6.4,
+  thickness = 0.6,
+  arms = 2.5,
+  spin = 1.45
+} = {}){
+  const total = diskCount + coreCount;
+  const geo = new THREE.BufferGeometry();
+  const pos = new Float32Array(total*3);
+  const aColor = new Float32Array(total*3);
+
+  const inner = new THREE.Color("#ffd79e");
+  const mid   = new THREE.Color("#cf8bff");
+  const outer = new THREE.Color("#3b21ff");
+
+  for(let i=0;i<diskCount;i++){
+    const r = Math.pow(Math.random(), 0.55) * radius;
+    const a = rand(0, Math.PI*2);
+    const spiral = a + r*spin;
+    const arm = Math.sin(spiral*arms) * 0.28;
+
+    const x = Math.cos(spiral)*r + arm*0.16 + rand(-0.07,0.07);
+    const z = Math.sin(spiral)*r - arm*0.16 + rand(-0.07,0.07);
+    const y = rand(-1,1) * thickness * (1.0 - r/radius) * 0.85 + rand(-0.05,0.05);
+
+    pos[i*3+0]=x; pos[i*3+1]=y; pos[i*3+2]=z;
+
+    const t = r/radius;
+    const c = new THREE.Color();
+    if(t < 0.30) c.copy(inner).lerp(mid, t/0.30);
+    else c.copy(mid).lerp(outer, (t-0.30)/0.70);
+
+    const boost = rand(0.9, 1.8);
+    aColor[i*3+0]=c.r*boost;
+    aColor[i*3+1]=c.g*boost;
+    aColor[i*3+2]=c.b*boost;
+  }
+
+  for(let j=0;j<coreCount;j++){
+    const i = diskCount + j;
+    let x=0,y=0,z=0;
+    while(true){
+      x=rand(-1,1); y=rand(-1,1); z=rand(-1,1);
+      if(x*x+y*y+z*z<=1.0) break;
+    }
+    const rr = Math.pow(Math.random(), 0.18) * 1.18;
+    x*=rr; y*=rr; z*=rr; y*=0.82;
+
+    pos[i*3+0]=x; pos[i*3+1]=y; pos[i*3+2]=z;
+
+    const t = clamp(rr/1.18,0,1);
+    const c = new THREE.Color().copy(inner).lerp(mid, t*0.45);
+    const boost = rand(1.6, 3.1);
+
+    aColor[i*3+0]=c.r*boost;
+    aColor[i*3+1]=c.g*boost;
+    aColor[i*3+2]=c.b*boost;
+  }
+
+  geo.setAttribute("position", new THREE.BufferAttribute(pos,3));
+  geo.setAttribute("aColor", new THREE.BufferAttribute(aColor,3));
+  geo.computeBoundingSphere();
+  return geo;
+}
+
+const galaxy = new THREE.Group();
+root.add(galaxy);
+
+const pts = new THREE.Points(buildGalaxy(), particleMat);
+galaxy.add(pts);
+
+// ---- Ring band (also uses aColor)
+{
+  const N = 32000;
+  const geo = new THREE.BufferGeometry();
+  const pos = new Float32Array(N*3);
+  const aColor = new Float32Array(N*3);
+
+  const c1 = new THREE.Color("#ffe0b6");
+  const c2 = new THREE.Color("#b57cff");
+
+  for(let i=0;i<N;i++){
+    const ang = rand(0, Math.PI*2);
+    const r = rand(2.6, 6.1);
+    const x = Math.cos(ang)*r;
+    const z = Math.sin(ang)*r;
+    const y = rand(-0.14, 0.14);
+
+    pos[i*3+0]=x; pos[i*3+1]=y; pos[i*3+2]=z;
+
+    const t = (r-2.6)/(6.1-2.6);
+    const cc = new THREE.Color().copy(c1).lerp(c2, t);
+    const boost = rand(1.0, 2.4);
+
+    aColor[i*3+0]=cc.r*boost;
+    aColor[i*3+1]=cc.g*boost;
+    aColor[i*3+2]=cc.b*boost;
+  }
+
+  geo.setAttribute("position", new THREE.BufferAttribute(pos,3));
+  geo.setAttribute("aColor", new THREE.BufferAttribute(aColor,3));
+
+  const ring = new THREE.Points(geo, particleMat);
+  ring.rotation.x = Math.PI * 0.18;
+  ring.rotation.z = Math.PI * 0.06;
+  galaxy.add(ring);
+}
+
+// ---- Interaction
+let targetRX=0, targetRY=0, camTargetZ=9;
+const pointer = {x:0,y:0,down:false,lx:0,ly:0};
+
+addEventListener("pointerdown",(e)=>{pointer.down=true; pointer.lx=e.clientX; pointer.ly=e.clientY;});
+addEventListener("pointerup",()=>pointer.down=false);
+addEventListener("pointermove",(e)=>{
+  pointer.x=(e.clientX/innerWidth)*2-1;
+  pointer.y=(e.clientY/innerHeight)*2-1;
+  if(pointer.down){
+    const dx=(e.clientX-pointer.lx)/innerWidth;
+    const dy=(e.clientY-pointer.ly)/innerHeight;
+    targetRY += dx*2.2;
+    targetRX += dy*1.6;
+    pointer.lx=e.clientX; pointer.ly=e.clientY;
+  }
+},{passive:true});
+
+addEventListener("wheel",(e)=>{
+  camTargetZ = clamp(camTargetZ + Math.sign(e.deltaY)*0.6, 5.3, 14.5);
+},{passive:true});
+
+// ---- Resize
+function resize(){
+  renderer.setSize(innerWidth, innerHeight, false);
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  composer.setSize(innerWidth, innerHeight);
+  bloomPass.setSize(innerWidth, innerHeight);
+}
+addEventListener("resize", resize);
+resize();
+
+// ---- Animate
+const clock = new THREE.Clock();
+function tick(){
+  const t = clock.getElapsedTime();
+  uniforms.uTime.value = t;
+
+  galaxy.rotation.y = t * 0.22;
+  galaxy.rotation.x = Math.sin(t*0.35) * 0.06;
+
+  const px = pointer.x * 0.35;
+  const py = -pointer.y * 0.22;
+  const desiredRX = clamp(targetRX + py, -0.75, 0.75);
+  const desiredRY = targetRY + px;
+
+  root.rotation.x = lerp(root.rotation.x, desiredRX, 0.06);
+  root.rotation.y = lerp(root.rotation.y, desiredRY, 0.06);
+
+  camera.position.z = lerp(camera.position.z, camTargetZ, 0.08);
+  camera.position.x = Math.sin(t*0.25) * 0.06;
+  camera.position.y = 0.65 + Math.cos(t*0.2) * 0.05;
+
+  composer.render();
+  requestAnimationFrame(tick);
+}
+tick();
+
+// ---- Hotkeys adjust bloom
+window.addEventListener("keydown",(e)=>{
+  if(e.key==="+") bloomPass.strength = clamp(bloomPass.strength + 0.1, 0.2, 3.0);
+  if(e.key==="-") bloomPass.strength = clamp(bloomPass.strength - 0.1, 0.2, 3.0);
+});
+</script>
+</body>
+</html>
